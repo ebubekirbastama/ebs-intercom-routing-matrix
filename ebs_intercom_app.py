@@ -108,29 +108,63 @@ class AudioRouter(threading.Thread):
         self.out_streams = {}
 
     def run(self):
+        import time
+    
         try:
             self.open_streams()
         except Exception as e:
             messagebox.showerror("Audio Stream Hatası", str(e))
             self.stop_event.set()
             return
-
+    
+        # -----------------------------------------
+        # 🔥 Reset ve VU limit zamanlayıcıları
+        # -----------------------------------------
+        self.last_reset = time.time()
+        self.last_vu_update = 0
+    
         while not self.stop_event.is_set():
             try:
+                # ==========================================================
+                # 🔥 1) Her 300 saniyede (5 dakika) stream RESETLE
+                # ==========================================================
+                if time.time() - self.last_reset > 300:
+                    try:
+                        print("[INFO] Audio stream resetleniyor...")
+                        self.close_streams()
+                        self.open_streams()
+                    except Exception as e:
+                        print("[Reset HATASI]:", e)
+    
+                    self.last_reset = time.time()
+    
+                # ==========================================================
+                # 🔥 2) Mikrofondan veri oku
+                # ==========================================================
                 data = self.mic_stream.read(CHUNK, exception_on_overflow=False)
                 audio_np = np.frombuffer(data, dtype=np.int16)
-
-                # VU meter güncelle
-                lvl = rms_level(audio_np)
-                if self.vu_callback:
+    
+                # ==========================================================
+                # 🔥 3) VU Meter: 50ms'den hızlı güncellemeyi engelle
+                # ==========================================================
+                now = time.time()
+                if self.vu_callback and (now - self.last_vu_update) > 0.05:
+                    lvl = rms_level(audio_np)
                     self.vu_callback(lvl)
-
+                    self.last_vu_update = now
+    
+                # ==========================================================
+                # 🔥 4) Mute veya PTT kapalıysa sesi tamamen kes
+                # ==========================================================
                 if self.mute_var.get():
                     continue
-
+    
                 if self.ptt_enabled_var.get() and not self.ptt_pressed_var.get():
                     continue
-
+    
+                # ==========================================================
+                # 🔥 5) Gain uygula
+                # ==========================================================
                 gain = float(self.gain_var.get())
                 if gain != 1.0:
                     f = audio_np.astype(np.float32) * gain
@@ -138,20 +172,34 @@ class AudioRouter(threading.Thread):
                     out_data = f.tobytes()
                 else:
                     out_data = data
-
-                # Routing row'u güvenli şekilde al
+    
+                # ==========================================================
+                # 🔥 6) Routing tablosunu güvenli şekilde al
+                # ==========================================================
                 with self.routing_lock:
                     row = self.routing_getter(self.self_index)
-
-                # Hangi kişilere gidecekse yaz
+    
+                # ==========================================================
+                # 🔥 7) Sesi gerekli kişilere yaz (route et)
+                # ==========================================================
                 for j, s in self.out_streams.items():
                     if row[j]:
-                        s.write(out_data)
-
-            except Exception:
+                        try:
+                            s.write(out_data)
+                        except Exception as e:
+                            print("[Write HATASI]:", e)
+                            continue
+    
+            except Exception as e:
+                print("[Thread HATASI]:", e)
+                time.sleep(0.05)
                 continue
-
+    
+        # ==========================================================
+        # 🔥 8) Stop etkin → tüm streamleri kapat
+        # ==========================================================
         self.close_streams()
+
 
 
 class IntercomApp:
