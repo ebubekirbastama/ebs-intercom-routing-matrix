@@ -200,7 +200,11 @@ class AudioRouter(threading.Thread):
         # ==========================================================
         self.close_streams()
 
-
+def fix_turkish(text):
+    try:
+        return text.encode("latin1").decode("utf-8")
+    except:
+        return text
 
 class IntercomApp:
     def __init__(self, root):
@@ -283,14 +287,19 @@ class IntercomApp:
         cell["color"] = color
         cell["state"] = state
 
+
+    
     # ---------------- Devices ----------------
     def get_devices(self):
         devs = []
         for i in range(self.p.get_device_count()):
             info = self.p.get_device_info_by_index(i)
+            
+            fixed_name = fix_turkish(info["name"])
+            
             devs.append({
                 "id": i,
-                "name": info["name"],
+                "name": fixed_name,
                 "maxInput": info.get("maxInputChannels", 0),
                 "maxOutput": info.get("maxOutputChannels", 0)
             })
@@ -307,6 +316,7 @@ class IntercomApp:
 
     # ---------------- UI ----------------
     def build_ui(self):
+        self.root.configure(bg="#0f111a")
         tb.Style("darkly")
         main = tb.Frame(self.root, padding=12)
         main.pack(fill=BOTH, expand=True)
@@ -378,7 +388,7 @@ class IntercomApp:
         in_names = [f'{d["id"]} - {d["name"]}' for d in inputs]
         out_names = [f'{d["id"]} - {d["name"]}' for d in outputs]
 
-        default_names_base = ["Spiker", "Soru Sorana", "Konuk", "Yönetmen", "Editör", "Misafir"]
+        default_names_base = ["Reji", "Moderatör", "Konuk", "Konuk1", "Konuk2", "Konuk3"]
         default_names = default_names_base[:n]
 
         # grid sütunlarını eşitle
@@ -464,169 +474,182 @@ class IntercomApp:
 
     def routing_getter(self, i):
         return self.routing[i]
-
     def open_mixer(self):
         n = int(self.person_count_var.get())
-
+    
         win = tb.Toplevel(self.root)
-        win.title("🎚 OBS Tarzı Mikser / Routing Matrix")
-        win.geometry("980x700")
+        win.title("🎚 Neon Mikser / Routing Matrix")
+        win.geometry("1040x720")
+        win.configure(bg="#0f111a")  # Dark futuristic background
         win.resizable(True, True)
-
-        # OBS vibe: koyu arkaplan
-        win.configure(bg="#101214")
-
-        header = tb.Label(
+    
+        # --- Title ---
+        title = tk.Label(
             win,
-            text="🎧 Ses Yönlendirme Matrisi (OBS Grid)\n"
-                 "Satırdaki 🎙️ KONUŞAN kişinin sesi → Sütundaki 🎧 DİNLEYEN kişiye gider.\n"
-                 "🟢 Açık | 🔴 Kapalı | ⚪ Kilitli (Kişi kendini duyamaz)",
-            font=("Segoe UI", 12, "bold"),
-            justify="center",
-            bootstyle="inverse"
+            text="🔮 Neon Routing Matrix\nKonuşan → Dinleyen yönlendirmesi",
+            font=("Segoe UI", 18, "bold"),
+            fg="#b27dff",
+            bg="#0f111a"
         )
-        header.pack(pady=10)
-
-        outer = tb.Frame(win, bootstyle="dark")
-        outer.pack(fill=BOTH, expand=True, padx=14, pady=14)
-
-        table = tb.Frame(outer, bootstyle="dark")
-        table.pack(padx=10, pady=10)
-
-        # Grid çizgileri gibi görünmesi için frame border
-        for c in range(n+1):
-            table.columnconfigure(c, weight=1)
-
-        # --- Başlıklar (sütun) ---
-        tb.Label(table, text="", bootstyle="inverse").grid(row=0, column=0, padx=8, pady=8)
-
+        title.pack(pady=20)
+    
+        # --- Outer Container ---
+        outer = tk.Frame(win, bg="#0f111a")
+        outer.pack(fill="both", expand=True, padx=20, pady=10)
+    
+        table = tk.Frame(outer, bg="#0f111a")
+        table.pack()
+    
+        # --- Column Names ---
+        tk.Label(table, text="", bg="#0f111a").grid(row=0, column=0, padx=10)
+    
         for j in range(n):
             name = self.person_panels[j]["name_var"].get()
-            lbl = tb.Label(
+            lbl = tk.Label(
                 table,
                 text=f"🎧 {name}",
-                font=("Segoe UI", 11, "bold"),
-                bootstyle="inverse"
+                font=("Segoe UI", 12, "bold"),
+                fg="#9da5ff",
+                bg="#0f111a",
             )
-            lbl.grid(row=0, column=j+1, padx=12, pady=12)
-
-        # hücre referansları
-        cells = {}  # (i,j) -> cell dict
-
-        # --- Satırlar + LED yuvarlak node'lar ---
+            lbl.grid(row=0, column=j+1, padx=20, pady=10)
+    
+        # --- Routing Cells Storage ---
+        cells = {}
+    
+        # 🔮 LED Glow Colors
+        glow_on = "#7dffb2"
+        glow_off = "#ff7d7d"
+        glow_lock = "#7d7d7d"
+    
+        # --- Build Matrix ---
         for i in range(n):
             name_i = self.person_panels[i]["name_var"].get()
-            tb.Label(
+            left_label = tk.Label(
                 table,
-                text=f"🎙️ {name_i}",
-                font=("Segoe UI", 11, "bold"),
-                bootstyle="inverse"
-            ).grid(row=i+1, column=0, padx=10, pady=10, sticky="e")
-
+                text=f"🎙 {name_i}",
+                font=("Segoe UI", 12, "bold"),
+                fg="#9da5ff",
+                bg="#0f111a"
+            )
+            left_label.grid(row=i+1, column=0, padx=10, pady=10)
+    
             for j in range(n):
-                # OBS-stil hücre arka paneli
-                cell_frame = tb.Frame(
+    
+                # --- Circle Button Canvas ---
+                canvas = tk.Canvas(
                     table,
-                    bootstyle="dark",
-                    padding=4
+                    width=65,
+                    height=65,
+                    bg="#131622",
+                    highlightthickness=0
                 )
-                cell_frame.grid(row=i+1, column=j+1, padx=10, pady=10)
-
-                # Circular LED node = Canvas
-                cv = tk.Canvas(
-                    cell_frame,
-                    width=52, height=52,
-                    bg="#181b1f",  # obs cell bg
-                    highlightthickness=1,
-                    highlightbackground="#2b2f36"
+    
+                canvas.grid(row=i+1, column=j+1, padx=18, pady=14)
+    
+                # Draw circle
+                circle = canvas.create_oval(
+                    10, 10, 55, 55,
+                    fill="#1a1d2e", outline="#1a1d2e"
                 )
-                cv.pack()
-
-                # circle
-                circle = cv.create_oval(
-                    8, 8, 44, 44,
-                    fill="#333333",
-                    outline="#333333",
-                    width=2
+    
+                # Neon Glow Shadow (Outer halo)
+                halo = canvas.create_oval(
+                    5, 5, 60, 60,
+                    outline="",
+                    fill=""
                 )
-                # emoji text
-                text_id = cv.create_text(
-                    26, 26,
-                    text="",
-                    fill="white",
-                    font=("Segoe UI Emoji", 14, "bold")
-                )
-
-                # başlangıç state
+    
+                # Determine initial state
                 if i == j:
                     state = "lock"
+                    fill_color = glow_lock
                 else:
                     state = "on" if self.routing[i][j] else "off"
-
-                cell = {
-                    "cv": cv,
+                    fill_color = glow_on if state == "on" else glow_off
+    
+                # Fill circle
+                canvas.itemconfig(circle, fill=fill_color)
+    
+                # Save cell reference
+                cells[(i, j)] = {
+                    "canvas": canvas,
                     "circle": circle,
-                    "text": text_id,
-                    "state": state,
-                    "color": None
+                    "halo": halo,
+                    "state": state
                 }
-                cells[(i, j)] = cell
-                self._set_led_state(cell, state)
-
-                # --- HOVER EFEKTİ (LED parlaması) ---
-                def make_hover_handlers(ii=i, jj=j):
-                    cell_local = cells[(ii, jj)]
-
+    
+                # --- Hover Effects ---
+                def make_hover(ii=i, jj=j):
                     def on_enter(_):
-                        if cell_local["state"] == "lock":
+                        if cells[(ii, jj)]["state"] == "lock":
                             return
-                        # hover'da hafif aydınlat
-                        base = cell_local["color"]
-                        hover = self._blend(base, "#ffffff", 0.25)
-                        cv.itemconfig(circle, fill=hover, outline=hover)
-
+                        # Halo glow
+                        canvas = cells[(ii, jj)]["canvas"]
+                        halo_id = cells[(ii, jj)]["halo"]
+                        canvas.itemconfig(halo_id, fill="#3d3d3d")
                     def on_leave(_):
-                        if cell_local["state"] == "lock":
-                            return
-                        base = cell_local["color"]
-                        cv.itemconfig(circle, fill=base, outline=base)
-
+                        canvas = cells[(ii, jj)]["canvas"]
+                        halo_id = cells[(ii, jj)]["halo"]
+                        canvas.itemconfig(halo_id, fill="")
                     return on_enter, on_leave
-
-                on_enter, on_leave = make_hover_handlers()
-                cv.bind("<Enter>", on_enter)
-                cv.bind("<Leave>", on_leave)
-
-                # --- CLICK / TOGGLE + PULSE + FADE ---
+    
+                on_enter, on_leave = make_hover()
+                canvas.bind("<Enter>", on_enter)
+                canvas.bind("<Leave>", on_leave)
+    
+                # --- CLICK TOGGLE ---
                 if i != j:
                     def make_toggle(ii=i, jj=j):
-                        cell_local = cells[(ii, jj)]
                         def toggle(_):
-                            # routing değiştir
+                            # Update routing
                             with self.routing_lock:
                                 self.routing[ii][jj] = not self.routing[ii][jj]
                                 new_state = "on" if self.routing[ii][jj] else "off"
-
-                            # pulse animasyonu
-                            base_color = "#1fa64b" if new_state == "on" else "#c0392b"
-                            self._click_pulse(cell_local["cv"], cell_local["circle"], base_color)
-
-                            # state set (fade ile)
-                            self._set_led_state(cell_local, new_state)
+    
+                            cell = cells[(ii, jj)]
+                            canvas = cell["canvas"]
+    
+                            if new_state == "on":
+                                color = glow_on
+                            else:
+                                color = glow_off
+    
+                            canvas.itemconfig(cell["circle"], fill=color)
+                            cell["state"] = new_state
+    
+                            # Pulse Animation
+                            def pulse(k=0):
+                                if k > 6:
+                                    canvas.itemconfig(cell["halo"], fill="")
+                                    return
+                            
+                                # simulate alpha by using lighter/darker gray
+                                brightness = 200 - k * 20  # 200 → 80
+                                hex_val = f"{brightness:02x}"
+                                color = f"#{hex_val}{hex_val}{hex_val}"
+                            
+                                canvas.itemconfig(cell["halo"], fill=color)
+                                canvas.after(40, lambda: pulse(k+1))
+                            
+    
+                            pulse()
+    
                         return toggle
-
-                    cv.bind("<Button-1>", make_toggle())
-
-        # Alt mini legend (obs grid gibi)
-        legend = tb.Frame(win, bootstyle="dark")
-        legend.pack(pady=6)
-
-        tb.Label(legend, text="🟢 Açık", bootstyle="success-inverse", padding=6).pack(side=LEFT, padx=6)
-        tb.Label(legend, text="🔴 Kapalı", bootstyle="danger-inverse", padding=6).pack(side=LEFT, padx=6)
-        tb.Label(legend, text="⚪ Kilitli", bootstyle="secondary-inverse", padding=6).pack(side=LEFT, padx=6)
-
-        tb.Button(win, text="Kapat", bootstyle="secondary", command=win.destroy).pack(pady=10)
-
+                    canvas.bind("<Button-1>", make_toggle())
+    
+        # --- Bottom Legend ---
+        legend = tk.Frame(win, bg="#0f111a")
+        legend.pack(pady=20)
+    
+        tk.Label(legend, text="🟢 Açık", fg=glow_on, bg="#0f111a", font=("Segoe UI", 12)).pack(side="left", padx=12)
+        tk.Label(legend, text="🔴 Kapalı", fg=glow_off, bg="#0f111a", font=("Segoe UI", 12)).pack(side="left", padx=12)
+        tk.Label(legend, text="⚪ Kilitli", fg=glow_lock, bg="#0f111a", font=("Segoe UI", 12)).pack(side="left", padx=12)
+    
+        tk.Button(win, text="Kapat", command=win.destroy,
+                  bg="#1a1d2e", fg="#9da5ff",
+                  font=("Segoe UI", 12), relief="flat",
+                  activebackground="#25293a").pack(pady=24)
 
 
     # ---------------- Actions ----------------
