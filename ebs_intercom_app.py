@@ -12,6 +12,8 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 
 
+
+
 def rms_level(int16_audio: np.ndarray):
     if int16_audio.size == 0:
         return 0.0
@@ -208,6 +210,16 @@ def fix_turkish(text):
 
 class IntercomApp:
     def __init__(self, root):
+    
+        self.presets = {
+           "EBS Default Modu":"presets/ebs_default_routing_config.json",
+           "TV Yayını Modu": "presets/tv_yayin.json",
+           "Podcast Modu": "presets/podcast.json",
+           "Serbest Mod": "presets/free_mode.json",
+           "Teknik Yayın Modu": "presets/teknik_yayin.json"
+        }
+        self.selected_preset = tk.StringVar(value="EBS Default Modu")
+
         self.root = root
         self.root.title("Çok Kişilik Interkom - Mixer Routing")
         self.root.geometry("1200x760")
@@ -234,6 +246,24 @@ class IntercomApp:
     def _hex_to_rgb(self, hx):
         hx = hx.lstrip("#")
         return tuple(int(hx[i:i+2], 16) for i in (0, 2, 4))
+    def center_window(self, win, w=None, h=None):
+        win.update_idletasks()
+        
+        if w is None or h is None:
+            # Eğer width/height zorunlu değilse mevcut geometry alınır
+            geo = win.geometry().split("+")[0]
+            w, h = geo.split("x")
+            w, h = int(w), int(h)
+        
+        # Ekran boyutu
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+    
+        # Merkez hesaplama
+        x = (sw - w) // 2
+        y = (sh - h) // 2
+    
+        win.geometry(f"{w}x{h}+{x}+{y}")
 
     def _rgb_to_hex(self, rgb):
         return "#%02x%02x%02x" % rgb
@@ -304,12 +334,59 @@ class IntercomApp:
                 "maxOutput": info.get("maxOutputChannels", 0)
             })
         return devs
-
+    
     def list_inputs(self):
-        return [d for d in self.devices if is_real_input(d)]
+        # Aramak istediğin isim keyword'leri
+        role_keywords = ["moderatör", "reji", "konuk1", "konuk2", "konuk3"]
+    
+        found = []           # Sonuç listesi
+        used_roles = set()   # Hangi role ait cihaz alındı?
+    
+        for d in self.devices:
+            if not is_real_input(d):
+                continue
+    
+            name_low = d["name"].lower()
+    
+            for role in role_keywords:
+                if role in name_low and role not in used_roles:
+                    found.append(d)      # sadece ilk bulunanı ekle
+                    used_roles.add(role) # o role için başka ekleme yapılmayacak
+                    break
+    
+        return found
 
     def list_outputs(self):
-        return [d for d in self.devices if is_real_output(d)]
+        role_keywords = ["moderatör", "reji", "konuk1", "konuk2", "konuk3"]
+    
+        found = []
+        used_roles = set()
+    
+        for d in self.devices:
+            if not is_real_output(d):
+                continue
+    
+            name_low = d["name"].lower()
+    
+            for role in role_keywords:
+                if role in name_low and role not in used_roles:
+                    found.append(d)
+                    used_roles.add(role)
+                    break
+    
+        return found
+
+    def load_routing_preset(self):
+        import json
+        preset_path = self.presets.get(self.selected_preset.get(), "")
+        try:
+            with open(preset_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print("Routing preset yüklenemedi:", e)
+            return {}
+    
+     
 
     def parse_id(self, s):
         return int(s.split(" - ")[0].strip())
@@ -373,6 +450,26 @@ class IntercomApp:
             "• Mikserde tıklayarak anlık routing değiştirebilirsin."
         )
         tb.Label(main, text=hint, justify="left", foreground="#bbbbbb").pack(anchor="w", pady=4)
+        tb.Label(topbar, text="Mod:", font=("Segoe UI", 11, "bold")).pack(side=LEFT, padx=(20, 6))
+
+        preset_cb = tb.Combobox(
+            topbar,
+            width=18,
+            state="readonly",
+            values=list(self.presets.keys()),
+            textvariable=self.selected_preset
+        )
+        preset_cb.pack(side=LEFT)
+        
+        preset_cb.bind("<<ComboboxSelected>>", lambda e: self.on_change_preset())
+        
+    def on_change_preset(self):
+        if self.running:
+            messagebox.showinfo("Uyarı", "Preset değiştirmek için interkomu durdurun.")
+            return
+    
+        self.init_routing_matrix()
+        messagebox.showinfo("Preset Yüklendi", f"'{self.selected_preset.get()}' uygulanmıştır.")
 
     def clear_person_panels(self):
         for w in self.grid_holder.winfo_children():
@@ -464,13 +561,37 @@ class IntercomApp:
     # ---------------- Routing / Mixer ----------------
     def init_routing_matrix(self):
         n = int(self.person_count_var.get())
+    
+        # JSON preset'i yükle
+        routing_preset = self.load_routing_preset()
+    
+        # Kişi isimlerini al (Reji, Moderatör, Konuk...)
+        names = [p["name_var"].get() for p in self.person_panels]
+    
         with self.routing_lock:
             self.routing = []
+    
             for i in range(n):
                 row = []
+                speaker = names[i]  # konuşanın ismi
+    
                 for j in range(n):
-                    row.append(False if i == j else True)
+                    if i == j:
+                        row.append(False)
+                        continue
+    
+                    listener = names[j]
+    
+                    # JSON'da tanımlı mı?
+                    if speaker in routing_preset:
+                        allowed = routing_preset[speaker]["hear"]
+                        row.append(listener in allowed)
+                    else:
+                        # JSON'da bulunmuyorsa varsayılan herkesi duysun
+                        row.append(True)
+    
                 self.routing.append(row)
+    
 
     def routing_getter(self, i):
         return self.routing[i]
@@ -650,6 +771,9 @@ class IntercomApp:
                   bg="#1a1d2e", fg="#9da5ff",
                   font=("Segoe UI", 12), relief="flat",
                   activebackground="#25293a").pack(pady=24)
+                  
+        self.center_window(win, 1040, 720)
+
 
 
     # ---------------- Actions ----------------
@@ -741,5 +865,8 @@ class IntercomApp:
 if __name__ == "__main__":
     root = tb.Window(themename="darkly")
     app = IntercomApp(root)
+    app.center_window(root)
     root.protocol("WM_DELETE_WINDOW", app.on_close)
     root.mainloop()
+    
+    
